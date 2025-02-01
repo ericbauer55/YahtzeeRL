@@ -1,13 +1,13 @@
-from functools import cache
 from gym import Env, logger, spaces
 from gym.spaces import Dict, MultiBinary, MultiDiscrete, Discrete
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 import numpy as np
 from typing import Optional
 import re
 from collections import Counter
 from pprint import pprint
+from copy import deepcopy
 
 
 class YahzeeEnv(Env):
@@ -40,6 +40,8 @@ class YahzeeEnv(Env):
         
         # Setup the Action Space
         self.action_space = Dict({'keep':MultiBinary(self.num_dice), 'score_option':self._init_scored_options()})
+        self.action_pattern = r'^([kK][01]{'+ f'{self.num_dice}'+'}|'+ '|'.join(self._get_scorable_options().keys()) +')$'
+        self.action_format_checker = re.compile(self.action_pattern)
     
     def _init_scored_options(self):
         scorable_options: dict = self._get_scorable_options()
@@ -51,7 +53,6 @@ class YahzeeEnv(Env):
             raise ValueError(f'Game Length "{self.game_length}" is not valid--use {self.metadata["game_length"]}')
         return scored_option_space
         
-    @cache
     def _get_scorable_options(self):
         # Determine the valid set of scoring options
         upper = [f'SU-{i}' for i in range(1,6+1)]
@@ -135,7 +136,7 @@ class YahzeeEnv(Env):
     def _get_rolls_score(self, action:str):
         assert action in self._get_scorable_options().keys(), f'Action "{action}" is not a valid scoring option'
         rolls = sorted(list(self._rolls+1))
-        roll_str = ''.join(rolls)
+        roll_str = ''.join([str(x) for x in rolls])
         roll_values = Counter(rolls)
         suffix = action.split('-')[-1]
 
@@ -175,9 +176,9 @@ class YahzeeEnv(Env):
             self._scored_options[scored_action_index] = 1 # MultiBinary space
 
     
-    def _roll_dice(self, keep_per_die:Optional[list[int]]=None):
+    def _roll_dice(self, keep_per_die:Optional[List[int]]=None):
         if keep_per_die is None:
-            keep_per_die = [0] * self.metadata['num_dice']
+            keep_per_die = [0] * self.num_dice
 
         reroll_mask = np.ones_like(self._rolls) # this allows all possible values to occur (re-roll)
         blank_keep_mask = np.zeros_like(self._rolls) # this will be 1-hot encoded to keep a value
@@ -208,8 +209,11 @@ class YahzeeEnv(Env):
 
         This method is meant to support Option 3
         '''
-        unused_score_options = [option for option,state_index in self._get_scorable_options().keys() 
-                                if self._scored_options[state_index]==0]
+        if self.game_length=='short':
+            unused_score_options = list(self._get_scorable_options().keys())
+        elif self.game_length=='full':
+            unused_score_options = [option for option,state_index in self._get_scorable_options().items() 
+                                    if self._scored_options[state_index]==0]
         
         if (self._is_keep_action(action)) and (self._roll_num < 3):
             return True
@@ -226,11 +230,12 @@ class YahzeeEnv(Env):
             return False
     
     def render(self):
-        if self.metadata['render_mode']=='ansi':
+        if self.render_mode=='ansi':
             self._render_text()
     
     def _render_text(self):
-        observation = self._get_obs()
+        observation = deepcopy(self._get_obs())
+        observation['rolls'] = observation['rolls']+1 # index starts at 0, so move range into 1-6
         info = self._get_info()
         print('\n'+'='*80)
         print('Observation:')
