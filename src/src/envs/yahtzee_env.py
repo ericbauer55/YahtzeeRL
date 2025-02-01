@@ -35,7 +35,7 @@ class YahzeeEnv(Env):
 
         # Setup the State Space
         self.observation_space = Dict({'roll_num':Discrete(3,start=1),
-                                       'rolls':MultiDiscrete([6]*self.num_dice),
+                                       'rolls':MultiDiscrete([6]*self.num_dice, dtype=np.int8),
                                        'scored_options':self._init_scored_options()})
         
         # Setup the Action Space
@@ -77,7 +77,7 @@ class YahzeeEnv(Env):
         super().reset(seed=seed)
 
         self._roll_num = 1
-        self._rolls = self.observation_space['rolls'].sample()
+        self._rolls:np.ndarray = self.observation_space['rolls'].sample().astype(np.int8)
         if self.game_length=='short':
             self._scored_options = 0
         elif self.game_length=='full':
@@ -142,7 +142,10 @@ class YahzeeEnv(Env):
 
         is_small_straight = (roll_str=='1234') or (roll_str=='2345') or (roll_str=='3456')
         is_large_straight = (roll_str=='12345') or (roll_str=='23456')
-        is_full_house = roll_values.most_common()[0][1]==3 and roll_values.most_common()[1][1]==2
+        if len(roll_values.most_common())>1:
+            is_full_house = roll_values.most_common()[0][1]==3 and roll_values.most_common()[1][1]==2
+        else:
+            is_full_house = False
 
         if action.startswith('SU'):
             score = sum([x for x in rolls if x==int(suffix)])
@@ -180,13 +183,15 @@ class YahzeeEnv(Env):
         if keep_per_die is None:
             keep_per_die = [0] * self.num_dice
 
-        reroll_mask = np.ones_like(self._rolls) # this allows all possible values to occur (re-roll)
-        blank_keep_mask = np.zeros_like(self._rolls) # this will be 1-hot encoded to keep a value
+        N_SIDES_PER_DIE = 6
+        current_rolls:np.ndarray = self._rolls
+        reroll_mask = np.ones((N_SIDES_PER_DIE,), dtype=current_rolls.dtype) # this allows all possible values to occur (re-roll)
+        blank_keep_mask = np.zeros((N_SIDES_PER_DIE,), dtype=current_rolls.dtype) # this will be 1-hot encoded to keep a value
         masks = []
         for i,keep in enumerate(keep_per_die):
             if keep==True:
                 mask = blank_keep_mask.copy()
-                kept_event = self._rolls[i]
+                kept_event = current_rolls[i]
                 mask[kept_event] = 1
             else:
                 mask = reroll_mask.copy()
@@ -223,7 +228,7 @@ class YahzeeEnv(Env):
             return False
     
     def _is_keep_action(self, action:str):
-        pattern_keep = r'[kK][01]{' + str(self.metadata['num_dice']) + '}'
+        pattern_keep = r'[kK][01]{' + str(self.num_dice) + '}'
         if (re.match(pattern_keep, action) is not None):
             return True
         else:
